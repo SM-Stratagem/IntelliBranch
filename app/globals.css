@@ -1,6 +1,10 @@
 @import "tailwindcss";
+/* Load the legacy JS config so font-fraunces / font-instrument / navy / teal
+   utilities resolve under Tailwind v4 (v4 does not auto-detect tailwind.config.ts). */
+@config "../tailwind.config.ts";
 
 :root {
+  /* Static brand palette (marketing site + dashboard chrome) */
   --navy: #0B1F3A;
   --navy2: #132A4E;
   --teal: #0D9488;
@@ -9,11 +13,19 @@
   --border: #E2E8F0;
   --muted: #64748B;
   --text: #1E293B;
+
+  /* White-label tokens — overridden per tenant by <TenantProvider> via inline
+     style. Every brand-aware surface in the dashboard reads these, so swapping
+     a tenant's primaryColor re-skins the whole product (chrome + charts). */
+  --primary: #0D9488;
+  --primary-lt: #14B8A6;
+  --accent: #0B1F3A;
 }
 
 html { scroll-behavior: smooth; }
 body { -webkit-font-smoothing: antialiased; }
 
+/* ---- Marketing site animations (unchanged) ---- */
 @keyframes fadeUp {
   from { opacity: 0; transform: translateY(20px); }
   to { opacity: 1; transform: translateY(0); }
@@ -32,3 +44,42 @@ body { -webkit-font-smoothing: antialiased; }
     linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
   background-size: 56px 56px;
 }
+
+/* ----------------------------------------------------------------------------
+   White-label brand helper classes.
+   Defined here (rather than as Tailwind theme colors) so they always resolve to
+   the *runtime* CSS variable — meaning a tenant's colour change re-skins these
+   instantly without a rebuild. color-mix gives us tints/shades from one hex.
+---------------------------------------------------------------------------- */
+.text-primary { color: var(--primary); }
+.text-accent { color: var(--accent); }
+.bg-primary { background-color: var(--primary); }
+.bg-primary-lt { background-color: var(--primary-lt); }
+.bg-accent { background-color: var(--accent); }
+.bg-primary-soft { background-color: color-mix(in srgb, var(--primary) 10%, transparent); }
+.bg-primary-softer { background-color: color-mix(in srgb, var(--primary) 6%, transparent); }
+.border-primary { border-color: var(--primary); }
+.border-primary-soft { border-color: color-mix(in srgb, var(--primary) 30%, transparent); }
+.ring-primary { --tw-ring-color: var(--primary); }
+.fill-primary { fill: var(--primary); }
+.stroke-primary { stroke: var(--primary); }
+.hover\:bg-primary:hover { background-color: var(--primary); }
+.hover\:bg-primary-lt:hover { background-color: var(--primary-lt); }
+.hover\:text-primary:hover { color: var(--primary); }
+.hover\:border-primary:hover { border-color: var(--primary); }
+
+/* Reusable shimmer for loading skeletons */
+@keyframes shimmer {
+  0% { background-position: -468px 0; }
+  100% { background-position: 468px 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, #EEF1F6 25%, #F8F9FC 50%, #EEF1F6 75%);
+  background-size: 936px 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+/* Thin custom scrollbars inside dashboard panels */
+.scroll-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+.scroll-thin::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 8px; }
+.scroll-thin::-webkit-scrollbar-track { background: transparent; }

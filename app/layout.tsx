@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Fraunces, Instrument_Sans } from "next/font/google";
 import "./globals.css";
+import StoreHydrator from "@/components/StoreHydrator";
 
 const fraunces = Fraunces({
   subsets: ["latin"],
@@ -29,7 +30,10 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${fraunces.variable} ${instrumentSans.variable}`}>
-      <body className="font-instrument text-[#1E293B] bg-white antialiased">{children}</body>
+      <body className="font-instrument text-[#1E293B] bg-white antialiased">
+        <StoreHydrator />
+        {children}
+      </body>
     </html>
   );
 }

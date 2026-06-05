@@ -59,6 +59,12 @@ export default function Navbar() {
             </Link>
           ))}
           <Link
+            href="/login"
+            className="text-sm font-medium text-[#64748B] hover:text-[#0B1F3A] transition-colors"
+          >
+            Sign In
+          </Link>
+          <Link
             href="/contact"
             className="bg-[#0B1F3A] text-white text-sm font-semibold px-5 py-2.5 rounded-md hover:bg-[#132A4E] transition-colors"
           >
@@ -90,6 +96,13 @@ export default function Navbar() {
                 {l.label}
               </Link>
             ))}
+            <Link
+              href="/login"
+              onClick={() => setOpen(false)}
+              className="text-sm font-medium text-[#64748B] hover:text-[#0B1F3A]"
+            >
+              Sign In
+            </Link>
             <Link
               href="/contact"
               onClick={() => setOpen(false)}

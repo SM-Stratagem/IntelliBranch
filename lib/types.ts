@@ -1,0 +1,189 @@
+// ============================================================================
+// IntelliBranch — shared domain types
+// ============================================================================
+
+export type IndustryType =
+  | "retail"
+  | "fnb"
+  | "healthcare"
+  | "automotive"
+  | "hospitality"
+  | "fitness"
+  | "education"
+  | "franchise"
+  | "logistics";
+
+export type UserRole =
+  | "super_admin" // SM Stratagem — can access all tenants
+  | "tenant_admin" // Client HQ — sees all their branches
+  | "branch_manager" // Sees only their assigned branch(es)
+  | "franchisee" // Sees only their franchise locations
+  | "viewer"; // Read-only, no exports
+
+/** Module keys map 1:1 to dashboard routes under /dashboard. */
+export type ModuleKey =
+  | "overview"
+  | "revenue"
+  | "pnl"
+  | "heatmap"
+  | "branches"
+  | "forecast"
+  | "whatif"
+  | "inventory"
+  | "staff"
+  | "alerts"
+  | "integrations"
+  | "settings";
+
+export type TenantConfig = {
+  id: string;
+  slug: string; // used in URL: app.intellibranch.io/[slug]
+  name: string; // company name shown in dashboard
+  productName: string; // e.g. "BranchIQ" if they white-label it
+  logoUrl: string; // their logo (we render an initials mark when absent)
+  faviconUrl: string;
+  primaryColor: string; // hex — replaces teal #0D9488
+  accentColor: string; // hex — secondary accent
+  industry: IndustryType; // controls which modules + terminology show
+  currency: string; // AED, USD, GBP, EUR etc
+  dateFormat: "DD/MM/YYYY" | "MM/DD/YYYY";
+  timezone: string;
+  locale: string;
+  modules: ModuleKey[]; // which features are enabled for this tenant
+  customDomain?: string; // e.g. dashboard.theircorp.com
+  supportEmail?: string;
+  hideSmStratagem: boolean; // true = fully white-labelled
+  welcomeMessage?: string;
+  plan: "Starter" | "Growth" | "Enterprise";
+  status: "active" | "trial" | "suspended";
+  createdAt: string; // ISO date
+  lastActive: string; // ISO date
+};
+
+export type Branch = {
+  id: string;
+  tenantId: string;
+  name: string;
+  city: string;
+  country: string;
+  /** Relative size multiplier — drives the magnitude of generated metrics. */
+  scale: number;
+  /** Long-run growth trend, e.g. 0.08 = +8% over the window, -0.05 = declining. */
+  trend: number;
+  openedAt: string;
+  active: boolean;
+};
+
+export type DailyPoint = {
+  date: string; // ISO yyyy-mm-dd
+  revenue: number;
+  cogs: number;
+  expenses: number;
+  grossProfit: number;
+  netProfit: number;
+  transactions: number; // covers / appointments / jobs depending on industry
+  customers: number;
+  avgTransaction: number;
+  staffCost: number;
+};
+
+export type KPISummary = {
+  revenue: number;
+  revenueDelta: number; // % vs prior period
+  margin: number; // gross margin %
+  marginDelta: number;
+  avgTransaction: number;
+  avgTransactionDelta: number;
+  transactions: number;
+  transactionsDelta: number;
+  topBranch: { id: string; name: string; revenue: number };
+  worstBranch: { id: string; name: string; revenue: number; delta: number };
+  bestDay: { date: string; revenue: number };
+};
+
+export type AlertSeverity = "critical" | "warning" | "info";
+export type AlertType =
+  | "revenue_drop"
+  | "margin_erosion"
+  | "stock_threshold"
+  | "staff_anomaly"
+  | "forecast_deviation";
+export type AlertStatus = "unread" | "read" | "snoozed" | "resolved";
+
+export type Alert = {
+  id: string;
+  tenantId: string;
+  branchId: string;
+  branchName: string;
+  type: AlertType;
+  severity: AlertSeverity;
+  title: string;
+  message: string;
+  metric: string;
+  value: string;
+  createdAt: string; // ISO datetime
+  status: AlertStatus;
+};
+
+export type ForecastPoint = {
+  date: string;
+  actual: number | null; // null for future dates
+  predicted: number;
+  lower: number; // confidence band lower bound
+  upper: number; // confidence band upper bound
+};
+
+export type CategoryBreakdown = { name: string; revenue: number; margin: number };
+export type PaymentMix = { method: string; amount: number };
+
+export type SKU = {
+  id: string;
+  name: string;
+  category: string;
+  stock: number;
+  reorderPoint: number;
+  dailyVelocity: number; // units sold/day
+  daysRemaining: number;
+  unitCost: number;
+  status: "healthy" | "low" | "critical" | "dead";
+};
+
+export type StaffMember = {
+  id: string;
+  name: string;
+  role: string;
+  branchId: string;
+  branchName: string;
+  revenuePerShift: number;
+  hoursThisWeek: number;
+  laborCostPct: number;
+  productivity: number; // 0-100 score
+};
+
+export type Integration = {
+  id: string;
+  name: string;
+  category: "POS" | "ERP" | "Inventory" | "HR" | "Accounting" | "Delivery";
+  status: "live" | "syncing" | "error" | "disconnected";
+  lastSync: string;
+  recordsToday: number;
+};
+
+export type Scenario = {
+  id: string;
+  name: string;
+  priceChange: number; // %
+  headcountChange: number; // absolute
+  hoursChange: number; // % of trading hours
+  newLocation: boolean;
+};
+
+export type SessionUser = {
+  id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  tenantId: string;
+  allowedBranches: string[]; // empty = all branches in tenant
+  avatarColor: string;
+};
