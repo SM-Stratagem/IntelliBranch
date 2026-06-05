@@ -9,6 +9,7 @@ import {
 import { getAllTenants, getBranches } from "@/lib/tenants";
 import { INDUSTRY } from "@/lib/industry";
 import { useDashboard } from "@/lib/store";
+import { apiLogout } from "@/lib/session-client";
 import { formatCurrency, formatDate } from "@/lib/format";
 import type { IndustryType, TenantConfig } from "@/lib/types";
 import DataTable, { type Column } from "@/components/ui/DataTable";
@@ -102,7 +103,7 @@ export default function AdminPage() {
         <span className="hidden rounded-full bg-white/10 px-2.5 py-0.5 text-[11px] font-semibold text-white/70 sm:block">SM Stratagem · Super Admin</span>
         <div className="ml-auto flex items-center gap-2">
           <Link href="/dashboard" className="inline-flex items-center gap-1.5 rounded-lg border border-white/20 px-3 py-1.5 text-xs font-semibold text-white/80 hover:bg-white/10"><ArrowLeft size={14} /> Dashboard</Link>
-          <button onClick={() => router.push("/login")} className="rounded-lg p-2 text-white/60 hover:bg-white/10 hover:text-white"><LogOut size={16} /></button>
+          <button onClick={async () => { await apiLogout(); router.push("/login"); }} className="rounded-lg p-2 text-white/60 hover:bg-white/10 hover:text-white"><LogOut size={16} /></button>
         </div>
       </header>
 

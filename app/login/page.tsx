@@ -4,7 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowRight, Lock, Mail, AlertCircle } from "lucide-react";
-import { authenticate, MOCK_USERS } from "@/lib/auth";
+import { MOCK_USERS } from "@/lib/auth";
+import { apiLogin } from "@/lib/session-client";
 import { getTenantById } from "@/lib/tenants";
 import { useDashboard } from "@/lib/store";
 
@@ -16,14 +17,21 @@ export default function LoginPage() {
   const [password, setPassword] = useState("demo");
   const [error, setError] = useState("");
 
-  const submit = (e: React.FormEvent) => {
+  const [loading, setLoading] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const user = authenticate(email, password);
+    setError("");
+    setLoading(true);
+    // Credentials are verified server-side (/api/login), which sets the signed
+    // httpOnly session cookie that the proxy checks on /dashboard and /admin.
+    const user = await apiLogin(email, password);
+    setLoading(false);
     if (!user) {
       setError("Invalid credentials. Try one of the demo accounts below.");
       return;
     }
-    // On success: hydrate session + resolve the user's tenant for white-labelling.
+    // On success: hydrate client session + resolve the tenant for white-labelling.
     setSession(user);
     const tenant = getTenantById(user.tenantId);
     if (tenant) setTenantSlug(tenant.slug);
@@ -77,8 +85,8 @@ export default function LoginPage() {
               </div>
             </div>
             {error && <p className="flex items-center gap-1.5 text-xs text-red-500"><AlertCircle size={14} /> {error}</p>}
-            <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#0D9488] py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#14B8A6]">
-              Sign in <ArrowRight size={16} />
+            <button type="submit" disabled={loading} className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#0D9488] py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#14B8A6] disabled:opacity-60">
+              {loading ? "Signing in…" : "Sign in"} <ArrowRight size={16} />
             </button>
           </form>
 

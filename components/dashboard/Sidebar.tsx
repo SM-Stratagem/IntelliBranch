@@ -8,6 +8,7 @@ import { useDashboard } from "@/lib/store";
 import { useTenant } from "@/components/TenantProvider";
 import { NAV_ITEMS } from "@/lib/nav";
 import { ROLE_LABEL } from "@/lib/auth";
+import { apiLogout } from "@/lib/session-client";
 import { generateAlerts } from "@/lib/mockData";
 import TenantLogo from "./TenantLogo";
 
@@ -124,7 +125,7 @@ export default function Sidebar() {
               <p className="truncate text-[11px] text-[#94A3B8]">{ROLE_LABEL[session.role]}</p>
             </div>
             <button
-              onClick={() => router.push("/login")}
+              onClick={async () => { await apiLogout(); router.push("/login"); }}
               className="rounded-lg p-1.5 text-[#94A3B8] transition-colors hover:bg-red-50 hover:text-red-500"
               aria-label="Log out"
             >
