@@ -2,10 +2,11 @@
 
 import { useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Boxes, Gauge, Skull, Check, X, Sparkles, Tag } from "lucide-react";
+import { Boxes, Gauge, Skull, Check, X, Sparkles, Tag, Truck, CalendarClock } from "lucide-react";
 import { useTenant } from "@/components/TenantProvider";
 import { useFakeLoading } from "@/lib/hooks";
-import { generateInventory } from "@/lib/mockData";
+import { generateInventory, generateReorderRecommendations } from "@/lib/mockData";
+import { shortDate } from "@/lib/format";
 import ChartCard from "@/components/ui/ChartCard";
 import KPICard from "@/components/ui/KPICard";
 import DataTable, { type Column } from "@/components/ui/DataTable";
@@ -17,9 +18,18 @@ import type { SKU } from "@/lib/types";
 
 const STATUS_BADGE: Record<SKU["status"], { v: "success" | "warning" | "danger" | "neutral"; label: string }> = {
   healthy: { v: "success", label: "Healthy" },
+  watch: { v: "warning", label: "Watch" },
   low: { v: "warning", label: "Low" },
   critical: { v: "danger", label: "Critical" },
+  overstocked: { v: "neutral", label: "Overstocked" },
   dead: { v: "neutral", label: "Dead stock" },
+};
+
+const URGENCY_BADGE = {
+  critical: { v: "danger" as const, label: "Critical" },
+  high: { v: "danger" as const, label: "High" },
+  medium: { v: "warning" as const, label: "Medium" },
+  low: { v: "neutral" as const, label: "Low" },
 };
 
 export default function InventoryPage() {
@@ -28,11 +38,12 @@ export default function InventoryPage() {
   const all = useMemo(() => generateInventory(tenant.id), [tenant.id]);
   const [handled, setHandled] = useState<Record<string, "approved" | "dismissed">>({});
 
+  const recs = useMemo(() => generateReorderRecommendations(tenant.id), [tenant.id]);
+  const recBySku = useMemo(() => new Map(recs.map((r) => [r.skuId, r])), [recs]);
   const fast = all.filter((s) => s.dailyVelocity >= 8).length;
   const slow = all.filter((s) => s.dailyVelocity < 8 && s.status !== "dead").length;
   const dead = all.filter((s) => s.status === "dead");
   const stockValue = all.reduce((a, s) => a + s.stock * s.unitCost, 0);
-  const reorders = all.filter((s) => s.status === "low" || s.status === "critical");
 
   const byCategory = useMemo(() => {
     const map = new Map<string, number>();
@@ -52,6 +63,9 @@ export default function InventoryPage() {
         </div>
       ),
     },
+    { key: "lead", header: "Lead Time", align: "right", sortValue: (r) => r.leadTimeDays, render: (r) => <span className="text-[#475569]">{r.leadTimeDays}<span className="text-[#94A3B8]">±{r.leadTimeVariabilityDays}d</span></span> },
+    { key: "stockout", header: "Stockout", align: "right", sortValue: (r) => r.expectedStockoutDate, render: (r) => <span className="text-[#64748B]">{shortDate(r.expectedStockoutDate)}</span> },
+    { key: "order", header: "Rec. Order", align: "right", sortValue: (r) => recBySku.get(r.id)?.recommendedOrderQty ?? 0, render: (r) => { const rec = recBySku.get(r.id); return rec ? <span><strong className="text-[#0B1F3A]">{rec.recommendedOrderQty}</strong> <span className="text-xs text-[#94A3B8]">by {shortDate(rec.recommendedOrderDate)}</span></span> : <span className="text-[#CBD5E1]">—</span>; } },
     { key: "status", header: "Status", align: "center", sortValue: (r) => r.status, render: (r) => <Badge variant={STATUS_BADGE[r.status].v}>{STATUS_BADGE[r.status].label}</Badge> },
   ];
 
@@ -61,7 +75,7 @@ export default function InventoryPage() {
     <div className="space-y-5">
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <KPICard label="Active SKUs" value={all.length.toString()} icon={Boxes} />
-        <KPICard label="Need Reorder" value={reorders.length.toString()} icon={Gauge} sub="low or critical" invertDelta delta={reorders.length > 5 ? 12 : -8} />
+        <KPICard label="Need Reorder" value={recs.length.toString()} icon={Gauge} sub="lead-time aware" invertDelta delta={recs.length > 5 ? 12 : -8} />
         <KPICard label="Dead Stock" value={dead.length.toString()} icon={Skull} sub="markdown candidates" />
         <KPICard label="Stock Value" value={money(stockValue, { compact: true })} icon={Tag} />
       </div>
@@ -75,26 +89,31 @@ export default function InventoryPage() {
 
       <div className="grid gap-5 lg:grid-cols-3">
         {/* Reorder recommendations */}
-        <ChartCard title="Reorder Recommendations" aiBadge subtitle="Approve or dismiss AI suggestions" className="lg:col-span-2" bodyClassName="space-y-2.5">
-          {reorders.length === 0 ? (
+        <ChartCard title="Reorder Recommendations" aiBadge subtitle="Lead-time-aware · forecast demand + safety stock − available" className="lg:col-span-2" bodyClassName="space-y-2.5">
+          {recs.length === 0 ? (
             <p className="py-6 text-center text-sm text-[#94A3B8]">No reorders needed right now.</p>
           ) : (
-            reorders.slice(0, 6).map((s) => {
-              const state = handled[s.id];
-              const qty = Math.max(s.reorderPoint * 2 - s.stock, s.reorderPoint);
+            recs.slice(0, 6).map((rec) => {
+              const state = handled[rec.id];
+              const u = URGENCY_BADGE[rec.urgency];
               return (
-                <div key={s.id} className={`flex items-center gap-3 rounded-xl border p-3.5 ${state === "approved" ? "border-emerald-200 bg-emerald-50" : state === "dismissed" ? "border-[#EEF1F6] bg-slate-50 opacity-60" : "border-[#EEF1F6]"}`}>
+                <div key={rec.id} className={`flex items-center gap-3 rounded-xl border p-3.5 ${state === "approved" ? "border-emerald-200 bg-emerald-50" : state === "dismissed" ? "border-[#EEF1F6] bg-slate-50 opacity-60" : "border-[#EEF1F6]"}`}>
                   <Sparkles size={16} className="flex-shrink-0 text-violet-500" />
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold text-[#0B1F3A]">{s.name}</p>
-                    <p className="text-xs text-[#64748B]">Order <strong>{qty}</strong> units · {s.daysRemaining}d cover left · est. {money(qty * s.unitCost, { compact: true })}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="truncate text-sm font-semibold text-[#0B1F3A]">{rec.skuName}</p>
+                      <Badge variant={u.v}>{u.label}</Badge>
+                    </div>
+                    <p className="text-xs text-[#64748B]">
+                      Order <strong>{rec.recommendedOrderQty}</strong> by {shortDate(rec.recommendedOrderDate)} · <Truck size={11} className="inline -mt-0.5" /> {rec.leadTimeDays}d lead · <CalendarClock size={11} className="inline -mt-0.5" /> stockout {shortDate(rec.expectedStockoutDate)} · risk {money(rec.financialImpact, { compact: true })}
+                    </p>
                   </div>
                   {state ? (
                     <Badge variant={state === "approved" ? "success" : "neutral"}>{state === "approved" ? "Approved" : "Dismissed"}</Badge>
                   ) : (
                     <div className="flex gap-1.5">
-                      <button onClick={() => setHandled((h) => ({ ...h, [s.id]: "approved" }))} className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-white hover:bg-primary-lt" title="Approve"><Check size={15} /></button>
-                      <button onClick={() => setHandled((h) => ({ ...h, [s.id]: "dismissed" }))} className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#E2E8F0] text-[#94A3B8] hover:border-red-300 hover:text-red-500" title="Dismiss"><X size={15} /></button>
+                      <button onClick={() => setHandled((h) => ({ ...h, [rec.id]: "approved" }))} className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-white hover:bg-primary-lt" title="Approve"><Check size={15} /></button>
+                      <button onClick={() => setHandled((h) => ({ ...h, [rec.id]: "dismissed" }))} className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#E2E8F0] text-[#94A3B8] hover:border-red-300 hover:text-red-500" title="Dismiss"><X size={15} /></button>
                     </div>
                   )}
                 </div>

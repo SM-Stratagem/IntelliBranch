@@ -28,6 +28,7 @@ export type ModuleKey =
   | "heatmap"
   | "branches"
   | "forecast"
+  | "demand"
   | "whatif"
   | "inventory"
   | "staff"
@@ -145,7 +146,42 @@ export type SKU = {
   dailyVelocity: number; // units sold/day
   daysRemaining: number;
   unitCost: number;
-  status: "healthy" | "low" | "critical" | "dead";
+  status: "healthy" | "watch" | "low" | "critical" | "overstocked" | "dead";
+
+  // ---- AI inventory intelligence (MVP layer) -------------------------------
+  tenantId: string;
+  branchId: string;
+  branchName: string;
+  supplierId: string;
+  supplierName: string;
+
+  // Stock position
+  stockOnHand: number;
+  stockOnOrder: number;
+  reservedStock: number;
+  availableStock: number; // onHand + onOrder − reserved
+  safetyStock: number;
+
+  // Lead time (supplier replenishment)
+  leadTimeDays: number;
+  leadTimeVariabilityDays: number;
+
+  // Demand forecast
+  forecastDemand7d: number;
+  forecastDemand30d: number;
+  forecastLower30d: number; // confidence band lower bound
+  forecastUpper30d: number; // confidence band upper bound
+  forecastConfidence: number; // 0-1
+
+  // Reorder planning
+  expectedStockoutDate: string; // ISO yyyy-mm-dd
+  recommendedOrderQty: number;
+  recommendedOrderDate: string; // ISO yyyy-mm-dd
+
+  // Margin / cost economics
+  sellingPrice: number;
+  grossMarginPct: number;
+  unitCostTrendPct: number; // +ve = cost rising
 };
 
 export type StaffMember = {
@@ -186,4 +222,126 @@ export type SessionUser = {
   tenantId: string;
   allowedBranches: string[]; // empty = all branches in tenant
   avatarColor: string;
+};
+
+// ============================================================================
+// AI inventory intelligence, reorder planning & SKU-level cost economics
+// ============================================================================
+
+export type SKUForecastPoint = {
+  date: string;
+  skuId: string;
+  skuName: string;
+  branchId: string;
+  actualUnits: number | null;
+  predictedUnits: number;
+  lowerUnits: number;
+  upperUnits: number;
+};
+
+export type SupplierLeadTime = {
+  supplierId: string;
+  supplierName: string;
+  skuId: string;
+  branchId: string;
+  quotedLeadTimeDays: number;
+  actualLeadTimeAvgDays: number;
+  actualLeadTimeP90Days: number;
+  leadTimeVariabilityDays: number;
+  delayRisk: "low" | "medium" | "high";
+};
+
+export type SKUMaterialCostPeriod = {
+  skuId: string;
+  skuName: string;
+  supplierId: string;
+  supplierName: string;
+  period: string;
+  periodType: "week" | "month";
+  openingUnitCost: number;
+  closingUnitCost: number;
+  averageUnitCost: number;
+  landedUnitCost: number;
+  rawMaterialCost: number;
+  freightCost: number;
+  dutyCost: number;
+  packagingCost: number;
+  supplierSurcharge: number;
+  wastageCost: number;
+  currency: string;
+};
+
+export type COGSBreakdown = {
+  tenantId: string;
+  branchId?: string;
+  period: string;
+  revenue: number;
+  totalCogs: number;
+  materialCost: number;
+  freightCost: number;
+  dutyCost: number;
+  packagingCost: number;
+  supplierSurcharge: number;
+  wastageCost: number;
+  returnsWriteOffs: number;
+  grossProfit: number;
+  grossMarginPct: number;
+  bySku: {
+    skuId: string;
+    skuName: string;
+    category: string;
+    unitsSold: number;
+    revenue: number;
+    cogs: number;
+    grossMarginPct: number;
+    unitCost: number;
+    costTrendPct: number;
+  }[];
+};
+
+export type ReorderRecommendation = {
+  id: string;
+  tenantId: string;
+  branchId: string;
+  branchName: string;
+  skuId: string;
+  skuName: string;
+  supplierId: string;
+  supplierName: string;
+  currentStock: number;
+  availableStock: number;
+  forecastDemandDuringLeadTime: number;
+  leadTimeDays: number;
+  safetyStock: number;
+  recommendedOrderQty: number;
+  recommendedOrderDate: string;
+  expectedStockoutDate: string;
+  urgency: "low" | "medium" | "high" | "critical";
+  financialImpact: number;
+  rationale: string;
+};
+
+export type SupplierScore = {
+  supplierId: string;
+  supplierName: string;
+  reliabilityScore: number;
+  avgLeadTimeDays: number;
+  delayRatePct: number;
+  costVolatilityPct: number;
+  fulfilmentAccuracyPct: number;
+  defectRatePct: number;
+  risk: "low" | "medium" | "high";
+};
+
+export type AIRecommendation = {
+  id: string;
+  tenantId: string;
+  branchId?: string;
+  title: string;
+  category: "inventory" | "margin" | "supplier" | "pricing" | "staffing" | "forecast" | "data_quality";
+  priority: "low" | "medium" | "high" | "critical";
+  financialImpact: number;
+  summary: string;
+  recommendedAction: string;
+  createdAt: string;
 };

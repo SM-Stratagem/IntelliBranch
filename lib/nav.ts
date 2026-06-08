@@ -1,6 +1,6 @@
 import {
   LayoutDashboard, DollarSign, FileText, Grid3x3, GitCompare, Sparkles,
-  SlidersHorizontal, Boxes, Users, Bell, Plug, Settings, type LucideIcon,
+  SlidersHorizontal, Boxes, Users, Bell, Plug, Settings, LineChart, type LucideIcon,
 } from "lucide-react";
 import type { ModuleKey, UserRole } from "./types";
 
@@ -22,6 +22,7 @@ export const NAV_ITEMS: NavItem[] = [
   { key: "branches", label: "Branches", href: "/dashboard/branches", icon: GitCompare },
   { key: "forecast", label: "Forecasting", href: "/dashboard/forecast", icon: Sparkles, ai: true },
   { key: "whatif", label: "What-If", href: "/dashboard/whatif", icon: SlidersHorizontal },
+  { key: "demand", label: "Demand Forecast", href: "/dashboard/demand", icon: LineChart, ai: true },
   { key: "inventory", label: "Inventory", href: "/dashboard/inventory", icon: Boxes, ai: true },
   { key: "staff", label: "Staff", href: "/dashboard/staff", icon: Users },
   { key: "alerts", label: "Alerts", href: "/dashboard/alerts", icon: Bell },

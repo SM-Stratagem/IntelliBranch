@@ -30,7 +30,7 @@ type IndustryMeta = {
 };
 
 const ALL: ModuleKey[] = [
-  "overview", "revenue", "pnl", "heatmap", "branches", "forecast",
+  "overview", "revenue", "pnl", "heatmap", "branches", "forecast", "demand",
   "whatif", "inventory", "staff", "alerts", "integrations", "settings",
 ];
 

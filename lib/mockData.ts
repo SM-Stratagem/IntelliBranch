@@ -1,9 +1,10 @@
 import type {
-  Alert, AlertSeverity, AlertType, Branch, CategoryBreakdown, DailyPoint,
-  ForecastPoint, Integration, KPISummary, PaymentMix, SKU, StaffMember, TenantConfig,
+  Alert, AlertSeverity, AlertType, Branch, CategoryBreakdown, COGSBreakdown, DailyPoint,
+  ForecastPoint, Integration, KPISummary, PaymentMix, ReorderRecommendation, SKU,
+  SKUForecastPoint, SKUMaterialCostPeriod, StaffMember, TenantConfig,
 } from "./types";
 import { getBranches, getTenantById } from "./tenants";
-import { TODAY } from "./format";
+import { TODAY, MONTHS } from "./format";
 
 // ============================================================================
 // Deterministic mock data layer.
@@ -50,6 +51,14 @@ function isoDay(d: Date): string {
 }
 function addDays(d: Date, n: number): Date {
   return new Date(d.getTime() + n * 86400_000);
+}
+function addMonths(d: Date, n: number): Date {
+  const x = new Date(d.getTime());
+  x.setUTCMonth(x.getUTCMonth() + n);
+  return x;
+}
+function shortLabel(d: Date): string {
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
 }
 
 // ---- Industry revenue envelopes (per-branch daily revenue range) -----------
@@ -342,9 +351,15 @@ export function generateAlerts(tenantId: string, branchIds?: string[]): Alert[] 
 }
 
 // ---- Inventory -------------------------------------------------------------
+const SUPPLIER_POOL = [
+  "Meridian Supply Co", "Apex Sourcing", "BlueHarbor Trading", "Lumea Distributors",
+  "Vantage Wholesale", "NorthGate Imports", "Crestline Partners", "Solvent & Co",
+];
+
 export function generateInventory(tenantId: string): SKU[] {
   const tenant = getTenantById(tenantId);
   const cats = CATEGORY_SETS[tenant?.industry ?? "retail"];
+  const branches = getBranches(tenantId);
   const r = rng(`${tenantId}:inv`);
   const out: SKU[] = [];
   for (let i = 0; i < 28; i++) {
@@ -353,10 +368,55 @@ export function generateInventory(tenantId: string): SKU[] {
     const stock = r.int(0, 600);
     const daysRemaining = dailyVelocity > 0 ? Math.round(stock / dailyVelocity) : 999;
     const reorderPoint = Math.round(dailyVelocity * 7);
+    const unitCost = +r.float(4, 240).toFixed(2);
+
     let status: SKU["status"] = "healthy";
     if (dailyVelocity < 1.2 && stock > 120) status = "dead";
     else if (daysRemaining <= 2) status = "critical";
     else if (stock <= reorderPoint) status = "low";
+    else if (daysRemaining <= 10) status = "watch";
+    else if (daysRemaining > 75) status = "overstocked";
+
+    // Branch & supplier assignment (deterministic).
+    const branch = branches.length ? branches[i % branches.length] : undefined;
+    const branchId = branch?.id ?? `${tenantId}-HQ`;
+    const branchName = branch?.name ?? "Head Office";
+    const supplierName = SUPPLIER_POOL[i % SUPPLIER_POOL.length];
+    const supplierId = `SUP-${100 + (i % SUPPLIER_POOL.length)}`;
+
+    // Stock position.
+    const stockOnHand = stock;
+    const stockOnOrder = status === "low" || status === "critical" ? r.int(0, reorderPoint) : r.int(0, Math.round(reorderPoint / 2));
+    const reservedStock = Math.min(stockOnHand, r.int(0, Math.round(dailyVelocity * 2)));
+    const availableStock = stockOnHand + stockOnOrder - reservedStock;
+
+    // Lead time.
+    const leadTimeDays = r.int(2, 45);
+    const leadTimeVariabilityDays = r.int(0, Math.max(1, Math.round(leadTimeDays * 0.3)));
+    const safetyStock = Math.round(dailyVelocity * leadTimeVariabilityDays + dailyVelocity * 3);
+
+    // Demand forecast.
+    const fcNoise7 = r.float(0.85, 1.18);
+    const fcNoise30 = r.float(0.85, 1.18);
+    const forecastDemand7d = Math.round(dailyVelocity * 7 * fcNoise7);
+    const forecastDemand30d = Math.round(dailyVelocity * 30 * fcNoise30);
+    const fcBand = r.float(0.12, 0.3);
+    const forecastLower30d = Math.round(forecastDemand30d * (1 - fcBand));
+    const forecastUpper30d = Math.round(forecastDemand30d * (1 + fcBand));
+    const forecastConfidence = +r.float(0.55, 0.95).toFixed(2);
+
+    // Reorder planning.
+    const stockoutInDays = dailyVelocity > 0 ? Math.round(availableStock / dailyVelocity) : 999;
+    const expectedStockoutDate = isoDay(addDays(TODAY, Math.min(stockoutInDays, 365)));
+    const demandDuringLeadTime = Math.round(dailyVelocity * leadTimeDays);
+    const recommendedOrderQty = Math.max(0, demandDuringLeadTime + safetyStock - availableStock);
+    const recommendedOrderDate = isoDay(addDays(TODAY, Math.max(0, Math.min(stockoutInDays - leadTimeDays, 365))));
+
+    // Margin / cost economics.
+    const grossMarginPct = +r.float(18, 62).toFixed(1);
+    const sellingPrice = +(unitCost / (1 - grossMarginPct / 100)).toFixed(2);
+    const unitCostTrendPct = +r.float(-8, 12).toFixed(1);
+
     out.push({
       id: `SKU-${1000 + i}`,
       name: `${category} Line ${String.fromCharCode(65 + (i % 26))}${i}`,
@@ -365,11 +425,275 @@ export function generateInventory(tenantId: string): SKU[] {
       reorderPoint,
       dailyVelocity,
       daysRemaining,
-      unitCost: +r.float(4, 240).toFixed(2),
+      unitCost,
       status,
+      tenantId,
+      branchId,
+      branchName,
+      supplierId,
+      supplierName,
+      stockOnHand,
+      stockOnOrder,
+      reservedStock,
+      availableStock,
+      safetyStock,
+      leadTimeDays,
+      leadTimeVariabilityDays,
+      forecastDemand7d,
+      forecastDemand30d,
+      forecastLower30d,
+      forecastUpper30d,
+      forecastConfidence,
+      expectedStockoutDate,
+      recommendedOrderQty,
+      recommendedOrderDate,
+      sellingPrice,
+      grossMarginPct,
+      unitCostTrendPct,
     });
   }
   return out.sort((a, b) => a.daysRemaining - b.daysRemaining);
+}
+
+// ---- SKU-level demand forecasting -----------------------------------------
+// Per-day demand multipliers by weekday (Sun…Sat) — light retail-style weekly
+// seasonality. The forecast generator is the single source of truth: both the
+// Demand page chart AND the reorder math read from it, so numbers stay aligned.
+const WEEKLY_DEMAND = [0.82, 0.95, 0.98, 1.04, 1.12, 1.28, 1.06];
+
+/** A branch's share of a SKU's tenant-wide demand, from its scale weight. */
+function branchDemandShare(sku: SKU, scope: string): number {
+  if (scope === "all") return 1;
+  const branches = getBranches(sku.tenantId);
+  const total = branches.reduce((a, b) => a + b.scale, 0) || 1;
+  const b = branches.find((x) => x.id === scope);
+  return b ? b.scale / total : 1;
+}
+
+/**
+ * Forecast a single SKU's unit demand: 14 days of "actuals" up to TODAY, then
+ * `horizon` days forward. Scope is a branch id or "all" (tenant-wide). Model =
+ * velocity × branch share × weekly seasonality × gentle trend, with a band that
+ * widens further into the future. Deterministic, seeded per (sku, scope, date).
+ */
+export function generateSKUForecast(sku: SKU, scope = "all", horizon = 30): SKUForecastPoint[] {
+  const share = branchDemandShare(sku, scope);
+  const branchId = scope === "all" ? "all" : scope;
+  const out: SKUForecastPoint[] = [];
+  const HISTORY = 14;
+  for (let d = -HISTORY; d <= horizon; d++) {
+    const date = addDays(TODAY, d);
+    const iso = isoDay(date);
+    const r = rng(`${sku.id}:${scope}:${iso}`);
+    const weekly = WEEKLY_DEMAND[date.getUTCDay()];
+    const trendFactor = 1 + (d / 365) * 0.6;
+    const baseline = sku.dailyVelocity * share * weekly * trendFactor;
+    const predictedUnits = Math.max(0, Math.round(baseline * r.float(0.93, 1.07)));
+    const isFuture = d > 0;
+    const bandPct = Math.min(0.35, 0.08 + Math.max(0, d) * 0.005);
+    out.push({
+      date: iso,
+      skuId: sku.id,
+      skuName: sku.name,
+      branchId,
+      actualUnits: isFuture ? null : Math.max(0, Math.round(baseline * r.float(0.86, 1.14))),
+      predictedUnits,
+      lowerUnits: Math.max(0, Math.round(predictedUnits * (1 - bandPct))),
+      upperUnits: Math.round(predictedUnits * (1 + bandPct)),
+    });
+  }
+  return out;
+}
+
+// ---- Lead-time-aware reorder planning -------------------------------------
+const URGENCY_RANK = { critical: 0, high: 1, medium: 2, low: 3 } as const;
+
+/**
+ * Reorder recommendations derived from the SKU position + demand forecast:
+ * order qty = forecast demand over the lead time + safety stock − available
+ * stock. Urgency reflects whether replenishment can land before stockout. Only
+ * SKUs that actually need an order are returned, most urgent first.
+ */
+export function generateReorderRecommendations(tenantId: string, branchIds?: string[]): ReorderRecommendation[] {
+  const skus = generateInventory(tenantId);
+  const tenant = getTenantById(tenantId);
+  const out: ReorderRecommendation[] = [];
+
+  for (const sku of skus) {
+    if (branchIds && !branchIds.includes(sku.branchId)) continue;
+
+    // Use the SKU's full demand ("all") — its stock/velocity fields are already
+    // its own totals, so a branch-share fraction here would understate demand.
+    const fc = generateSKUForecast(sku, "all", sku.leadTimeDays);
+    const future = fc.filter((p) => p.actualUnits === null).slice(0, sku.leadTimeDays);
+    const forecastDemandDuringLeadTime = Math.round(future.reduce((a, p) => a + p.predictedUnits, 0));
+    const recommendedOrderQty = Math.max(0, forecastDemandDuringLeadTime + sku.safetyStock - sku.availableStock);
+    if (recommendedOrderQty <= 0) continue;
+
+    const daysToStockout = sku.dailyVelocity > 0 ? Math.round(sku.availableStock / sku.dailyVelocity) : 999;
+    let urgency: ReorderRecommendation["urgency"] = "low";
+    if (daysToStockout <= sku.leadTimeDays) urgency = "critical"; // can't arrive in time
+    else if (sku.status === "critical") urgency = "high";
+    else if (sku.status === "low" || sku.status === "watch") urgency = "medium";
+
+    // Financial impact = margin lost if the shortfall stocks out before replenishment.
+    const shortfall = Math.max(0, forecastDemandDuringLeadTime - sku.availableStock);
+    const financialImpact = Math.round(shortfall * Math.max(0, sku.sellingPrice - sku.unitCost));
+
+    out.push({
+      id: `RO-${sku.id}`,
+      tenantId,
+      branchId: sku.branchId,
+      branchName: sku.branchName,
+      skuId: sku.id,
+      skuName: sku.name,
+      supplierId: sku.supplierId,
+      supplierName: sku.supplierName,
+      currentStock: sku.stockOnHand,
+      availableStock: sku.availableStock,
+      forecastDemandDuringLeadTime,
+      leadTimeDays: sku.leadTimeDays,
+      safetyStock: sku.safetyStock,
+      recommendedOrderQty,
+      recommendedOrderDate: sku.recommendedOrderDate,
+      expectedStockoutDate: sku.expectedStockoutDate,
+      urgency,
+      financialImpact,
+      rationale:
+        `${sku.availableStock} available vs ~${forecastDemandDuringLeadTime} forecast over the ${sku.leadTimeDays}-day ` +
+        `${sku.supplierName} lead time (±${sku.leadTimeVariabilityDays}d). Order ${recommendedOrderQty} ` +
+        `(incl. ${sku.safetyStock} safety stock) to avoid a stockout around ${sku.expectedStockoutDate}.`,
+    });
+  }
+
+  void tenant; // currency handled by the page's money() formatter
+  return out.sort((a, b) => URGENCY_RANK[a.urgency] - URGENCY_RANK[b.urgency] || b.financialImpact - a.financialImpact);
+}
+
+// ---- SKU-level material cost over time (COGS) -----------------------------
+// Proportional split of landed unit cost into its components. Each varies a
+// little per period; raw material also drifts with the SKU's cost trend.
+const COST_SPLIT = {
+  rawMaterial: 0.62,
+  freight: 0.12,
+  duty: 0.07,
+  packaging: 0.06,
+  surcharge: 0.05,
+  wastage: 0.04,
+};
+
+/**
+ * Per-SKU material cost broken down by period (weekly or monthly), ending at
+ * TODAY. Component costs vary deterministically period-to-period and the base
+ * drifts by the SKU's `unitCostTrendPct`, so cost trends are visible over time.
+ */
+export function generateSKUMaterialCostPeriods(
+  sku: SKU,
+  periodType: "week" | "month" = "month",
+  count = 6
+): SKUMaterialCostPeriod[] {
+  const tenant = getTenantById(sku.tenantId);
+  const currency = tenant?.currency ?? "USD";
+  const trend = sku.unitCostTrendPct / 100;
+  const span = periodType === "month" ? 12 : 52; // periods/year for the drift scale
+  const out: SKUMaterialCostPeriod[] = [];
+  let prevClosing = 0;
+
+  for (let p = count - 1; p >= 0; p--) {
+    const start = periodType === "month" ? addMonths(TODAY, -p) : addDays(TODAY, -p * 7);
+    const period = periodType === "month" ? `${MONTHS[start.getUTCMonth()]} '${String(start.getUTCFullYear()).slice(2)}` : `wk ${shortLabel(start)}`;
+    const r = rng(`${sku.id}:cost:${periodType}:${p}`);
+
+    // Base cost as it was `p` periods ago: today's cost rolled back along the trend.
+    const baseCost = sku.unitCost * (1 - trend * (p / span));
+    const comp = (ratio: number, lo: number, hi: number) => +(baseCost * ratio * r.float(lo, hi)).toFixed(2);
+    const rawMaterialCost = comp(COST_SPLIT.rawMaterial, 0.96, 1.04);
+    const freightCost = comp(COST_SPLIT.freight, 0.85, 1.2);
+    const dutyCost = comp(COST_SPLIT.duty, 0.92, 1.1);
+    const packagingCost = comp(COST_SPLIT.packaging, 0.95, 1.08);
+    const supplierSurcharge = comp(COST_SPLIT.surcharge, 0.8, 1.25);
+    const wastageCost = comp(COST_SPLIT.wastage, 0.7, 1.3);
+    const landedUnitCost = +(rawMaterialCost + freightCost + dutyCost + packagingCost + supplierSurcharge + wastageCost).toFixed(2);
+    const openingUnitCost = prevClosing || +(landedUnitCost * 0.98).toFixed(2);
+    prevClosing = landedUnitCost;
+
+    out.push({
+      skuId: sku.id,
+      skuName: sku.name,
+      supplierId: sku.supplierId,
+      supplierName: sku.supplierName,
+      period,
+      periodType,
+      openingUnitCost,
+      closingUnitCost: landedUnitCost,
+      averageUnitCost: +((openingUnitCost + landedUnitCost) / 2).toFixed(2),
+      landedUnitCost,
+      rawMaterialCost,
+      freightCost,
+      dutyCost,
+      packagingCost,
+      supplierSurcharge,
+      wastageCost,
+      currency,
+    });
+  }
+  return out;
+}
+
+/**
+ * Tenant (optionally branch) COGS breakdown for a 30-day window: revenue, total
+ * COGS split into cost components, gross profit, and per-SKU economics. Built
+ * from the same SKU set so it reconciles with the inventory + cost views.
+ */
+export function generateCOGSBreakdown(tenantId: string, branchId?: string, period = "Last 30 days"): COGSBreakdown {
+  const skus = generateInventory(tenantId).filter((s) => !branchId || s.branchId === branchId);
+  const r = rng(`${tenantId}:${branchId ?? "all"}:cogs`);
+
+  let revenue = 0, materialCost = 0, freightCost = 0, dutyCost = 0, packagingCost = 0, supplierSurcharge = 0, wastageCost = 0;
+  const bySku = skus.map((sku) => {
+    const unitsSold = Math.max(1, Math.round(sku.dailyVelocity * 30 * r.float(0.9, 1.1)));
+    const skuRevenue = +(unitsSold * sku.sellingPrice).toFixed(2);
+    const skuCogs = +(unitsSold * sku.unitCost).toFixed(2);
+    revenue += skuRevenue;
+    materialCost += skuCogs * COST_SPLIT.rawMaterial;
+    freightCost += skuCogs * COST_SPLIT.freight;
+    dutyCost += skuCogs * COST_SPLIT.duty;
+    packagingCost += skuCogs * COST_SPLIT.packaging;
+    supplierSurcharge += skuCogs * COST_SPLIT.surcharge;
+    wastageCost += skuCogs * COST_SPLIT.wastage;
+    return {
+      skuId: sku.id,
+      skuName: sku.name,
+      category: sku.category,
+      unitsSold,
+      revenue: skuRevenue,
+      cogs: skuCogs,
+      grossMarginPct: skuRevenue ? +(((skuRevenue - skuCogs) / skuRevenue) * 100).toFixed(1) : 0,
+      unitCost: sku.unitCost,
+      costTrendPct: sku.unitCostTrendPct,
+    };
+  });
+
+  const returnsWriteOffs = +(revenue * r.float(0.004, 0.012)).toFixed(0);
+  const totalCogs = +(materialCost + freightCost + dutyCost + packagingCost + supplierSurcharge + wastageCost).toFixed(0);
+  const grossProfit = +(revenue - totalCogs - returnsWriteOffs).toFixed(0);
+  return {
+    tenantId,
+    branchId,
+    period,
+    revenue: +revenue.toFixed(0),
+    totalCogs,
+    materialCost: +materialCost.toFixed(0),
+    freightCost: +freightCost.toFixed(0),
+    dutyCost: +dutyCost.toFixed(0),
+    packagingCost: +packagingCost.toFixed(0),
+    supplierSurcharge: +supplierSurcharge.toFixed(0),
+    wastageCost: +wastageCost.toFixed(0),
+    returnsWriteOffs,
+    grossProfit,
+    grossMarginPct: revenue ? +((grossProfit / revenue) * 100).toFixed(1) : 0,
+    bySku: bySku.sort((a, b) => b.revenue - a.revenue),
+  };
 }
 
 // ---- Staff -----------------------------------------------------------------

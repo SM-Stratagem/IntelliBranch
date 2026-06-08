@@ -1,13 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
-  Area, AreaChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend,
+  Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis, Legend,
 } from "recharts";
-import { DollarSign, Percent, Wallet, PiggyBank, FileText, FileDown } from "lucide-react";
+import { DollarSign, Percent, Wallet, PiggyBank, FileText, FileDown, Layers } from "lucide-react";
 import { useTenant } from "@/components/TenantProvider";
 import { useScope, useFakeLoading } from "@/lib/hooks";
-import { generatePortfolioSeries, generateBranchData } from "@/lib/mockData";
+import { generatePortfolioSeries, generateBranchData, generateInventory, generateSKUMaterialCostPeriods, generateCOGSBreakdown } from "@/lib/mockData";
 import { bucketSeries, downloadCSV } from "@/lib/aggregate";
 import { shortDate } from "@/lib/format";
 import KPICard from "@/components/ui/KPICard";
@@ -75,6 +75,54 @@ export default function PnlPage() {
     { key: "gross", header: "Gross", align: "right", sortValue: (r) => r.gross, render: (r) => money(r.gross, { compact: true }) },
     { key: "net", header: "Net", align: "right", sortValue: (r) => r.net, render: (r) => <span className={`font-semibold ${r.net >= 0 ? "text-emerald-600" : "text-red-500"}`}>{money(r.net, { compact: true })}</span> },
     { key: "margin", header: "Margin", align: "right", sortValue: (r) => r.margin, render: (r) => `${r.margin.toFixed(1)}%` },
+  ];
+
+  // ---- SKU-level material cost breakdown (varies per SKU per week/month) ----
+  const costSkus = useMemo(() => generateInventory(tenant.id), [tenant.id]);
+  const [costSku, setCostSku] = useState<string>(costSkus[0]?.id ?? "");
+  const [costPeriod, setCostPeriod] = useState<"week" | "month">("month");
+  const selectedCostSku = costSkus.find((s) => s.id === costSku) ?? costSkus[0];
+
+  const cogs30 = useMemo(() => generateCOGSBreakdown(tenant.id), [tenant.id]);
+
+  const COST_KEYS: [string, "rawMaterialCost" | "freightCost" | "dutyCost" | "packagingCost" | "supplierSurcharge" | "wastageCost"][] = [
+    ["Raw material", "rawMaterialCost"], ["Freight", "freightCost"], ["Duty", "dutyCost"],
+    ["Packaging", "packagingCost"], ["Surcharge", "supplierSurcharge"], ["Wastage", "wastageCost"],
+  ];
+
+  const costSeries = useMemo(() => {
+    if (!selectedCostSku) return [];
+    const periods = generateSKUMaterialCostPeriods(selectedCostSku, costPeriod, costPeriod === "month" ? 6 : 8);
+    return periods.map((p) => ({
+      label: p.period,
+      "Raw material": p.rawMaterialCost, Freight: p.freightCost, Duty: p.dutyCost,
+      Packaging: p.packagingCost, Surcharge: p.supplierSurcharge, Wastage: p.wastageCost,
+      landed: p.landedUnitCost,
+    }));
+  }, [selectedCostSku, costPeriod]);
+
+  type CostRow = { id: string; name: string; supplier: string; landed: number; raw: number; freight: number; other: number; trend: number };
+  const costRows: CostRow[] = useMemo(
+    () => costSkus.map((s) => {
+      const latest = generateSKUMaterialCostPeriods(s, costPeriod, 1)[0];
+      return {
+        id: s.id, name: s.name, supplier: s.supplierName,
+        landed: latest.landedUnitCost, raw: latest.rawMaterialCost, freight: latest.freightCost,
+        other: +(latest.dutyCost + latest.packagingCost + latest.supplierSurcharge + latest.wastageCost).toFixed(2),
+        trend: s.unitCostTrendPct,
+      };
+    }),
+    [costSkus, costPeriod]
+  );
+
+  const costCols: Column<CostRow>[] = [
+    { key: "name", header: "SKU", sortValue: (r) => r.name, render: (r) => (<button onClick={() => setCostSku(r.id)} className="text-left font-medium text-[#0B1F3A] hover:text-primary">{r.name}</button>) },
+    { key: "supplier", header: "Supplier", sortValue: (r) => r.supplier, render: (r) => <span className="text-[#64748B]">{r.supplier}</span> },
+    { key: "raw", header: "Raw", align: "right", sortValue: (r) => r.raw, render: (r) => money(r.raw, { decimals: 2 }) },
+    { key: "freight", header: "Freight", align: "right", sortValue: (r) => r.freight, render: (r) => money(r.freight, { decimals: 2 }) },
+    { key: "other", header: "Duty+Other", align: "right", sortValue: (r) => r.other, render: (r) => money(r.other, { decimals: 2 }) },
+    { key: "landed", header: "Landed Unit Cost", align: "right", sortValue: (r) => r.landed, render: (r) => <strong className="text-[#0B1F3A]">{money(r.landed, { decimals: 2 })}</strong> },
+    { key: "trend", header: "Cost Trend", align: "right", sortValue: (r) => r.trend, render: (r) => <span className={r.trend > 0 ? "font-semibold text-red-500" : "font-semibold text-emerald-600"}>{r.trend > 0 ? "+" : ""}{r.trend}%</span> },
   ];
 
   if (loading) return <div className="space-y-5"><div className="grid grid-cols-2 gap-4 lg:grid-cols-4"><LoadingSkeleton variant="kpi" count={4} /></div><div className="grid gap-5 lg:grid-cols-2"><LoadingSkeleton variant="chart" count={2} /></div></div>;
@@ -148,6 +196,50 @@ export default function PnlPage() {
             ))}
           </AreaChart>
         </ResponsiveContainer>
+      </ChartCard>
+
+      {/* SKU-level material cost breakdown — varies per SKU, per week or month */}
+      <ChartCard
+        title="SKU Material Cost Breakdown"
+        aiBadge
+        subtitle={selectedCostSku ? `${selectedCostSku.name} · landed unit cost by component` : "Select a SKU"}
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <select value={costSku} onChange={(e) => setCostSku(e.target.value)} className="max-w-[180px] rounded-lg border border-[#E2E8F0] px-2.5 py-1.5 text-xs font-medium outline-none focus:border-primary">
+              {costSkus.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+            <div className="flex rounded-lg border border-[#E2E8F0] p-0.5">
+              {(["week", "month"] as const).map((p) => (
+                <button key={p} onClick={() => setCostPeriod(p)} className={`rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors ${costPeriod === p ? "bg-primary text-white" : "text-[#64748B] hover:text-[#0B1F3A]"}`}>
+                  {p === "week" ? "Weekly" : "Monthly"}
+                </button>
+              ))}
+            </div>
+          </div>
+        }
+      >
+        <div className="mb-4 flex flex-wrap gap-x-6 gap-y-1.5 text-xs">
+          <span className="inline-flex items-center gap-1.5 text-[#64748B]"><Layers size={13} className="text-primary" /> 30-day COGS <strong className="text-[#0B1F3A]">{money(cogs30.totalCogs, { compact: true })}</strong></span>
+          <span className="text-[#64748B]">Material <strong className="text-[#0B1F3A]">{money(cogs30.materialCost, { compact: true })}</strong></span>
+          <span className="text-[#64748B]">Freight <strong className="text-[#0B1F3A]">{money(cogs30.freightCost, { compact: true })}</strong></span>
+          <span className="text-[#64748B]">Wastage <strong className="text-[#0B1F3A]">{money(cogs30.wastageCost, { compact: true })}</strong></span>
+          <span className="text-[#64748B]">Gross margin <strong className="text-emerald-600">{cogs30.grossMarginPct}%</strong></span>
+        </div>
+        <ResponsiveContainer width="100%" height={260}>
+          <BarChart data={costSeries} margin={{ left: -12, right: 8, top: 8 }}>
+            <CartesianGrid {...GRID_PROPS} />
+            <XAxis dataKey="label" tick={AXIS_TICK} tickLine={false} axisLine={false} />
+            <YAxis tick={AXIS_TICK} tickLine={false} axisLine={false} tickFormatter={(v) => money(v, { compact: true })} width={52} />
+            <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} formatter={(v, n) => [money(Number(v), { decimals: 2 }), n]} />
+            <Legend iconType="circle" iconSize={9} formatter={(val) => <span className="text-xs text-[#475569]">{val}</span>} />
+            {COST_KEYS.map(([label], i) => (
+              <Bar key={label} dataKey={label} stackId="cost" fill={CHART_COLORS[i]} radius={i === COST_KEYS.length - 1 ? [4, 4, 0, 0] : undefined} barSize={48} />
+            ))}
+          </BarChart>
+        </ResponsiveContainer>
+        <div className="mt-5">
+          <DataTable data={costRows} columns={costCols} pageSize={6} initialSort={{ key: "landed", dir: "desc" }} searchFields={(r) => `${r.name} ${r.supplier}`} searchPlaceholder="Search SKUs…" />
+        </div>
       </ChartCard>
 
       <ChartCard title={`${terms.branch}-level P&L`} subtitle="Compare unit economics across the estate">
